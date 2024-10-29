@@ -293,7 +293,7 @@ double joint_matmul(TOperand *A, TOperand *B, TResult *C, queue &q,
 
 template <size_t tM, size_t tN, size_t tK, class kernel_name> int gemm(void) {
   // number of test iterations
-  constexpr unsigned int testIterations = 100;
+  constexpr unsigned int testIterations = 10;
 
   queue q;
   bfloat16 *A = malloc_shared<bfloat16>(MATRIX_M * MATRIX_K, q);

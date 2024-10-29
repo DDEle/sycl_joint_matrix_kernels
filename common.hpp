@@ -6,6 +6,7 @@ using namespace sycl::ext::oneapi::experimental::matrix;
 namespace syclex = sycl::ext::oneapi::experimental;
 namespace syclintelex = sycl::ext::intel::experimental;
 using bfloat16 = sycl::ext::oneapi::bfloat16;
+using fp16 = sycl::half;
 
 #define BF16_EPSILON 0.00781250
 
@@ -14,6 +15,9 @@ float make_fp32(bfloat16 x) {
   y = y << 16;
   float *res = reinterpret_cast<float *>(&y);
   return *res;
+}
+float make_fp32(fp16 x) {
+  return x;
 }
 
 template <typename KernelName> size_t get_sg_size(queue q) {
@@ -36,6 +40,14 @@ void fill_matrix(bfloat16 *M, size_t Rows, size_t Cols) {
     }
   }
 }
+template <typename T, typename F>
+void fill_matrix(T *src, unsigned int rows, unsigned int cols, F op) {
+  for (unsigned int i = 0; i < rows; i++) {
+    for (unsigned int j = 0; j < cols; j++) {
+      src[i * cols + j] = T(op(i, j));
+    }
+  }
+}
 
 void native_matmul(bfloat16 *A, bfloat16 *B, float *C, size_t M, size_t N,
                    size_t K) {
@@ -44,6 +56,18 @@ void native_matmul(bfloat16 *A, bfloat16 *B, float *C, size_t M, size_t N,
     for (unsigned int k = 0; k < K; k++) {
       for (unsigned int j = 0; j < N; j++) {
         C[i * N + j] += make_fp32(A[i * K + k]) * make_fp32(B[k * N + j]);
+      }
+    }
+  }
+}
+template<typename T>
+void native_matmul_colmajorB(T *A, T *B, float *C, size_t M,
+                             size_t N, size_t K) {
+  memset(C, 0, sizeof(float) * M * N);
+  for (unsigned int i = 0; i < M; i++) {
+    for (unsigned int k = 0; k < K; k++) {
+      for (unsigned int j = 0; j < N; j++) {
+        C[i * N + j] += make_fp32(A[i * K + k]) * make_fp32(B[j * K + k]);
       }
     }
   }
