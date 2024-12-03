@@ -9,6 +9,10 @@
 #include "common.hpp"
 #include "joint_matmul_reduce_impl.hpp"
 
+#ifndef PREFETCH_DISTANCE
+#define PREFETCH_DISTANCE 1
+#endif
+
 #ifndef MATRIX_SIZE
 #define MATRIX_SIZE 2048
 #endif
@@ -48,7 +52,7 @@ template <unsigned int rowsA, unsigned int colsA, unsigned int rowsB,
           typename TResult, size_t tM, size_t tN, size_t tK, size_t TMCACHE1,
           size_t TNCACHE1, size_t TKCACHE1, size_t TMCACHE2, size_t TNCACHE2,
           size_t TKCACHE2, class kernel_name>
-double joint_matmul(TOperand *A, TOperand *B, TResult *C, queue &q,
+double joint_matmul(TOperand *A, TOperand * B_[10], TResult *C, queue &q,
                     int testIterations) {
 
   size_t SG_SIZE = get_sg_size<kernel_name>(q);
@@ -67,6 +71,7 @@ double joint_matmul(TOperand *A, TOperand *B, TResult *C, queue &q,
 
   for (unsigned int i = 0; i < testIterations; i++) {
 
+    auto B = B_[i % 10];
     auto mk = q.submit([&](handler &h) {
       h.parallel_for<kernel_name>( // cache layer#1
           nd_range<2>{global, cachelocal}, [=](nd_item<2> it) {
@@ -120,13 +125,13 @@ double joint_matmul(TOperand *A, TOperand *B, TResult *C, queue &q,
           size_t pm1B = sgId / 8;   // prefetch m1 (sgId/8)
           size_t pn1B = sgId & 0x7; // prefetch n1 (sgId%8)
 #endif                                 // VNNI
-            constexpr size_t prefDistance = 3;
-            for (int p = 0; p < prefDistance; p++)
-              joint_matrix_prefetch<prefRow, prefCol>(
-                  sg,
-                  A + (m2 * TMCACHE2 + sgId * prefRow) * colsA + p * prefCol,
-                  colsA, layout::row_major,
-                  syclex::properties{syclex::prefetch_hint_L1});
+            constexpr size_t prefDistance = PREFETCH_DISTANCE;
+            // for (int p = 0; p < prefDistance; p++)
+            //   joint_matrix_prefetch<prefRow, prefCol>(
+            //       sg,
+            //       A + (m2 * TMCACHE2 + sgId * prefRow) * colsA + p * prefCol,
+            //       colsA, layout::row_major,
+            //       syclex::properties{syclex::prefetch_hint_L1});
 
 #ifdef VNNI
             for (int p = 0; p < prefDistance; p++)
@@ -302,7 +307,11 @@ int gemm(void) {
 
   queue q;
   bfloat16 *A = malloc_shared<bfloat16>(MATRIX_M * MATRIX_K, q);
-  bfloat16 *B = malloc_shared<bfloat16>(MATRIX_K * MATRIX_N, q);
+  bfloat16* B[10];
+  for (int i = 0; i < 10; i++) {
+    B[i] = malloc_shared<bfloat16>(MATRIX_K * MATRIX_N, q);
+    fill_matrix(B[i], MATRIX_K, MATRIX_N);
+  }
 #ifdef VNNI
   bfloat16 *vnniB = malloc_shared<bfloat16>(MATRIX_K * MATRIX_N, q);
 #endif
@@ -310,7 +319,7 @@ int gemm(void) {
   // float *refC = malloc_shared<float>(MATRIX_M * MATRIX_N, q);
   // Initialize; fill matrices
   fill_matrix(A, MATRIX_M, MATRIX_K);
-  fill_matrix(B, MATRIX_K, MATRIX_N);
+  // fill_matrix(B, MATRIX_K, MATRIX_N);
   // native_matmul(A, B, refC, MATRIX_M, MATRIX_N, MATRIX_K);
 #ifdef VNNI
   matrix_vnni<bfloat16>(MATRIX_K, MATRIX_N, B, vnniB, 2);
@@ -357,7 +366,9 @@ int gemm(void) {
   std::cerr << "GOPS is " << gflops << " Gop/s" << std::endl;
 
   free(A, q);
-  free(B, q);
+  for (int i = 0; i < 10; i++) {
+    free(B[i], q);
+  }
   free(C, q);
 
   return 0;
